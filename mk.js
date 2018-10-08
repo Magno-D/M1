@@ -1,421 +1,236 @@
-const botSettings = require("./config.json");
-const Discord = require("discord.js");
-const axios = require("axios");
-const yt = require("ytdl-core");
-const YouTube = require("simple-youtube-api");
-const fs = require("fs");
-const getYTID = require("get-youtube-id");
-const fetchVideoInfo = require("youtube-info");
-const prefix = botSettings.prefix;
-const ytApiKey = botSettings.ytApiKey;
-const youtube = new YouTube(ytApiKey);
+const Discord = require('discord.js');
+const client = new Discord.Client();
+const ytdl = require('ytdl-core');
+const request = require('request');
+const fs = require('fs');
+const getYoutubeID = require('get-youtube-id');
+const fetchVideoInfo = require('youtube-info');
 
-const bot = new Discord.Client({
-	disableEveryone: true
+const yt_api_key = "AIzaSyDeoIH0u1e72AtfpwSKKOSy3IPp2UHzqi4";
+const prefix = 'M';
+const discord_token = "NDIyMDM3NzQwNTkxMzgyNTI4.DYV8zA.6vBJjF7Op9T_bH_YOwRMXqwh9vc";
+client.login(discord_token);
+client.on('ready', function() {
+	console.log(`i am ready ${client.user.username}`);
 });
-/* MUSIC VARIABLES */
-let queue = []; // Songs queue
-let songsQueue = []; // Song names stored for queue command
-let isPlaying = false; // Is music playing
-let dispatcher = null;
-let voiceChannel = null;
-let skipRequest = 0; // Stores the number of skip requests 
-let skippers = []; // Usernames of people who voted to skip the song
-let ytResultList = []; // Video names results from yt command
-let ytResultAdd = []; // For storing !add command choice
-/* MUSIC VARIABLES END */
-let re = /^(?:[1-5]|0[1-5]|10)$/; // RegEx for allowing only 1-5 while selecting song from yt results
-let regVol = /^(?:([1][0-9][0-9])|200|([1-9][0-9])|([0-9]))$/; // RegEx for volume control
-let youtubeSearched = false; // If youtube has been searched (for !add command)
-let selectUser; // Selecting user from guild
+/*
+////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\
+////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\
+////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\
+////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\
+*/
+var servers = [];
+var queue = [];
+var guilds = [];
+var queueNames = [];
+var isPlaying = false;
+var dispatcher = null;
+var voiceChannel = null;
+var skipReq = 0;
+var skippers = [];
+var now_playing = [];
+/*
+\\\\\\\\\\\\\\\\\\\\\\\\/////////////////////////
+\\\\\\\\\\\\\\\\\\\\\\\\/////////////////////////
+\\\\\\\\\\\\\\\\\\\\\\\\/////////////////////////
+\\\\\\\\\\\\\\\\\\\\\\\\/////////////////////////
+*/
+client.on('ready', () => {});
+console.log("Logged")
+var download = function(uri, filename, callback) {
+	request.head(uri, function(err, res, body) {
+		console.log('content-type:', res.headers['content-type']);
+		console.log('content-length:', res.headers['content-length']);
 
-bot.on("ready", async () => {
-	console.log(`Bot is ready! ${bot.user.username}`);
+		request(uri).pipe(fs.createWriteStream(filename)).on('close', callback);
+	});
+};
 
-	/*try {
-		let link = await bot.generateInvite(["ADMINISTRATOR"]);
-		console.log(link);
-	} catch (e) {
-		console.log(e.stack);
-	}*/
+client.on('message', function(message) {
+	const member = message.member;
+	const mess = message.content.toLowerCase();
+	const args = message.content.split(' ').slice(1).join(' ');
 
-});
+	if (mess.startsWith(prefix + 'play')) {
+		if (!message.member.hasPermission('ADMINISTRATOR')) return message.reply(':x:');
+		if (!message.member.voiceChannel) return message.reply('** You Are Not In VoiceChannel **');
+		// if user is not insert the URL or song title
+		if (args.length == 0) {
+			let play_info = new Discord.RichEmbed()
+				.setAuthor(client.user.username, client.user.avatarURL)
+				.setDescription('**قم بوضع الرابط , او  الاسم**')
+			message.channel.sendEmbed(play_info)
+			return;
+		}
+		if (queue.length > 0 || isPlaying) {
+			getID(args, function(id) {
+				add_to_queue(id);
+				fetchVideoInfo(id, function(err, videoInfo) {
+					if (err) throw new Error(err);
+					let play_info = new Discord.RichEmbed()
+						.setAuthor("أضيف إلى قائمة الانتظار", message.author.avatarURL)
+						.setDescription(`**${videoInfo.title}**`)
+						.setColor("RANDOM")
+						.setFooter('Requested By:' + message.author.tag)
+						.setImage(videoInfo.thumbnailUrl)
+					//.setDescription('?')
+					message.channel.sendEmbed(play_info);
+					queueNames.push(videoInfo.title);
+					// let now_playing = videoInfo.title;
+					now_playing.push(videoInfo.title);
 
-bot.on("message", async message => {
-	if (message.author.bot) return;
-	if (message.channel.type === "dm") return;
-
-	let messageContent = message.content.split(" ");
-	let command = messageContent[0];
-	let args = messageContent.slice(1);
-
-	if (!command.startsWith(prefix)) return;
-
-	switch (command.slice(1).toLowerCase()) {
-		case "userinfo":
-			if (args.length == 0) { // Displays the message author info if args are empty
-				let embed = new Discord.RichEmbed()
-					.setThumbnail(message.author.avatarURL)
-					.setColor("#8A2BE2")
-					.setDescription(`User info for: **${message.author.username}**`)
-					.addField("Avatar:", `[Link](${message.author.avatarURL})`, true)
-					.addField("Status:", message.author.presence.status, true)
-					.addField("Bot: ", message.author.bot, true)
-					.addField("In game: ", message.author.presence.game ? message.author.presence.game : "Not in game", true)
-					.addField("Tag: ", message.author.tag, true)
-					.addField("Discriminator:", message.author.discriminator, true)
-					.addBlankField()
-					.setFooter(`Profile created at: ${message.author.createdAt}`);
-
-				message.channel.send(embed);
-			} else { // Else displays info of user from args
-				if (message.guild.available) {
-					let selectUser = message.guild.member(message.mentions.users.first() || message.guild.members.get(args[0]));
-					let embed = new Discord.RichEmbed()
-						.setThumbnail(selectUser.user.displayAvatarURL)
-						.setColor("#8A2BE2")
-						.setDescription(`User info for: **${selectUser.user.username}**`)
-						.addField("Avatar:", `[Link](${selectUser.user.displayAvatarURL})`, true)
-						.addField("Status:", selectUser.user.presence.status, true)
-						.addField("Bot: ", selectUser.user.bot, true)
-						.addField("In game: ", selectUser.user.presence.game ? selectUser.user.presence.game : "Not in game", true)
-						.addField("Tag: ", selectUser.user.tag, true)
-						.addField("Discriminator:", selectUser.user.discriminator, true)
-						.addBlankField()
-						.setFooter(`Profile created at: ${selectUser.user.createdAt}`);
-
-					message.channel.send(embed);
-				}
-			}
-			break;
-
-		case "play":
-			if (args.length == 0 && queue.length > 0) {
-				if (!message.member.voiceChannel) {
-					message.reply("you need to be in a voice channel to play music. Please, join one and try again.");
-				} else {
-					isPlaying = true;
-					playMusic(queue[0], message);
-					message.reply(`now playing **${songsQueue[0]}**`);
-				}
-			} else if (args.length == 0 && queue.length == 0) {
-				message.reply("queue is empty now, type play [song name] or yt [song name] to play/search new songs!");
-			} else if (queue.length > 0 || isPlaying) {
-				getID(args).then(id => {
-					if (id) {
-						queue.push(id);
-						getYouTubeResultsId(args, 1).then(ytResults => {
-							message.reply(`added to queue **${ytResults[0]}**`);
-							songsQueue.push(ytResults[0]);
-						}).catch(error => console.log(error));
-					} else {
-						message.reply("sorry, couldn't find the song.");
-					}
-				}).catch(error => console.log(error));
-			} else {
-				isPlaying = true;
-				getID(args).then(id => {
-					if (id) {
-						queue.push(id);
-						playMusic(id, message);
-						getYouTubeResultsId(args, 1).then(ytResults => {
-							message.reply(`now playing **${ytResults[0]}**`);
-							songsQueue.push(ytResults[0]);
-						}).catch(error => console.log(error));
-					} else {
-						message.reply("sorry, couldn't find the song.");
-					}
-				}).catch(error => console.log(error));
-			}
-			break;
-
-		case "skip":
-			console.log(queue);
-			if (queue.length === 1) {
-				message.reply("queue is empty now, type !play [song name] or !yt [song name] to play/search new songs!");
-				dispatcher.end();
-				setTimeout(() => voiceChannel.leave(), 1000);
-			} else {
-				if (skippers.indexOf(message.author.id) === -1) {
-					skippers.push(message.author.id);
-					skipRequest++;
-
-					if (skipRequest >= Math.ceil((voiceChannel.members.size - 1) / 2)) {
-						skipSong(message);
-						message.reply("your skip has been added to the list. Skipping!");
-					} else {
-						message.reply(`your skip has been added to the list. You need **${Math.ceil((voiceChannel.members.size - 1) / 2) - skipRequest}** more to skip current song!`);
-					}
-				} else {
-					message.reply("you already voted to skip!");
-				}
-			}
-			break;
-
-		case "queue":
-			if (queue.length === 0) { // if there are no songs in the queue, send message that queue is empty
-				message.reply("queue is empty, type play or yt to play/search new songs!");
-			} else if (args.length > 0 && args[0] == 'remove') { // if arguments are provided and first one is remove
-				if (args.length == 2 && args[1] <= queue.length) { // check if there are no more than 2 arguments and that second one is in range of songs number in queue
-					// then remove selected song from the queue
-					message.reply(`**${songsQueue[args[1] - 1]}** has been removed from the queue. Type !queue to see the current queue.`);
-					queue.splice(args[1] - 1, 1);
-					songsQueue.splice(args[1] - 1, 1);
-				} else { // if there are more than 2 arguments and the second one is not in the range of songs number in queue, send message
-					message.reply(`you need to enter valid queued song number (1-${queue.length}).`);
-				}
-			} else if (args.length > 0 && args[0] == 'clear') { // same as remove, only clears queue if clear is first argument
-				if (args.length == 1) {
-					// reseting queue and songsQueue, but leaving current song
-					message.reply("all upcoming songs have been removed from the queue. type play or yt to play/search new songs!");
-					queue.splice(1);
-					songsQueue.splice(1);
-				} else {
-					message.reply("you need to type queue clear without following arguments.");
-				}
-			} else if (args.length > 0 && args[0] == 'shuffle') {
-				let tempA = [songsQueue[0]];
-				let tempB = songsQueue.slice(1);
-				songsQueue = tempA.concat(shuffle(tempB));
-				message.channel.send("Queue has been shuffled. Type queue to see the new queue!");
-			} else { // if there are songs in the queue and queue commands is without arguments display current queue
-				let format = "```"
-				for (const songName in songsQueue) {
-					if (songsQueue.hasOwnProperty(songName)) {
-						let temp = `${parseInt(songName) + 1}: ${songsQueue[songName]} ${songName == 0 ? "**(Current Song)**" : ""}\n`;
-						if ((format + temp).length <= 2000 - 3) {
-							format += temp;
-						} else {
-							format += "```";
-							message.channel.send(format);
-							format = "```";
-						}
-					}
-				}
-				format += "```";
-				message.channel.send(format);
-			}
-			break;
-
-		case "repeat":
-			if (isPlaying) {
-				queue.splice(1, 0, queue[0]);
-				songsQueue.splice(1, 0, songsQueue[0]);
-				message.reply(`**${songsQueue[0]}** will be played again.`);
-			}
-			break;
-
-		case "stop":
-			dispatcher.end();
-			setTimeout(() => voiceChannel.leave(), 1000);
-			break;
-
-		case "yt":
-			if (args.length == 0) {
-				message.reply("you need to enter search term (yt [search term]).");
-			} else {
-				message.channel.send("```Searching youtube...```");
-				getYouTubeResultsId(args, 5).then(ytResults => {
-					ytResultAdd = ytResults;
-					let ytEmbed = new Discord.RichEmbed()
-						.setColor("#FF0000")
-						.setAuthor("Youtube search results: ", icon_url = "https://cdn1.iconfinder.com/data/icons/logotypes/32/youtube-512.png")
-						.addField("1:", "```" + ytResults[0] + "```")
-						.addField("2:", "```" + ytResults[1] + "```")
-						.addField("3:", "```" + ytResults[2] + "```")
-						.addField("4:", "```" + ytResults[3] + "```")
-						.addField("5:", "```" + ytResults[4] + "```")
-						.addBlankField()
-						.setFooter("Send add [result number] to queue the song.");
-					message.channel.send(ytEmbed);
-					youtubeSearched = true;
-				}).catch(err => console.log(err));
-			}
-			break;
-
-		case "add":
-			if (youtubeSearched === true) {
-				if (!re.test(args)) {
-					message.reply("you entered the wrong song number or character. Please only enter 1-5 for song number to be queued.");
-				} else {
-					let choice = ytResultAdd[args - 1];
-					getID(choice).then(id => {
-						if (id) {
-							queue.push(id);
-							getYouTubeResultsId(choice, 1).then(ytResults => {
-								message.reply(`added to queue **${ytResults[0]}**`);
-								songsQueue.push(ytResults[0]);
-							}).catch(error => console.log(error));
-						}
-					}).catch(error => console.log(error));
-					youtubeSearched = false;
-				}
-			} else {
-				message.reply("you need to use 1yt [search term] command first to add song from the list to the queue.");
-			}
-			break;
-
-		case "vol":
-			if (args.length == 0 && dispatcher) {
-				message.reply(`current volume is ${dispatcher.volume}. Type !vol [percentage - 0 to 200] to set music volume.`);
-			} else if (args.length > 0 && regVol.test(args) == true && dispatcher) {
-				dispatcher.setVolume(args * 0.01);
-				message.reply(`music volume has been set to ${args}%.`);
-				console.log(dispatcher.volume);
-			} else if (!regVol.test(args) && dispatcher) {
-				message.reply("you need to enter a number in 0-200 range.");
-			} else {
-				message.reply("you can only set music volume if music is playing.");
-			}
-			break;
-
-
-	}
-});
-bot.on("ready", function() {
-	console.log("ready");
-	
-	bot.user.setStatus("Online");
-	bot.user.setGame("Mplay | Misk...");
-});
-bot.on('message', message => {
-if (message.content === prefix +'help') {
-	 message.channel.send('**[تم ارسال في الخاص** :mailbox_with_mail:**|Check Your DM]**');
-         let embed = new Discord.RichEmbed()
-.setThumbnail(message.author.avatarURL)
-	.setDescription (`
-#User "1userinfo [username or blank]": displays info for the selected user or for message sender if arguments are not provided
-
-#Music "1play [song name or blank]": plays a song or if arguments are not provided plays the first song in the queue
-
-"1skip": skips the current song
-
-"1queue": displays current queue
-
-"1queue remove [song number]": removes chosen song from the queue
-
-"1queue clear": removes all songs from the queue
-
-"1queue shuffle": shuffles the current queue
-
-"1repeat": plays current song again
-
-"1stop": stops playing music and deletes all songs in the queue
-
-"1yt [search term]": searches the YouTube and returns first 5 results
-
-"1add [search result number]": adds a song from YouTube search to the queue
-
-"1vol [percentage]": sets the volume of the music to given percentage
-
-● ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ ● 
-`)
-.setColor('RANDOM')
-  message.author.sendEmbed(embed);
-    }
-});
-/*--------------------------------*/
-/* MUSIC CONTROL FUNCTIONS START */
-/*------------------------------*/
-function playMusic(id, message) {
-	voiceChannel = message.member.voiceChannel;
-
-	voiceChannel.join()
-		.then(connection => {
-			console.log("Connected...");
-			stream = yt(`https://www.youtube.com/watch?v=${id}`, {
-				filter: 'audioonly'
-			})
-
-			skipRequest = 0;
-			skippers = [];
-
-			dispatcher = connection.playStream(stream);
-			dispatcher.setVolume(0.25);
-			dispatcher.on('end', () => {
-				skipRequest = 0;
-				skippers = [];
-				queue.shift();
-				songsQueue.shift();
-				if (queue.length === 0) {
-					console.log("Disconnected...");
-					queue = [];
-					songsQueue = [];
-					isPlaying = false;
-				} else {
-					setTimeout(() => playMusic(queue[0], message), 500);
-				}
+				});
 			});
-		})
-		.catch(error => console.log(error));
-}
+		}
+		else {
 
-async function getID(str) {
-	if (str.indexOf("youtube.com") > -1) {
-		return getYTID(str);
-	} else {
-		let body = await axios(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&q=${encodeURIComponent(str)}&key=${ytApiKey}`);
-		if (body.data.items[0] === undefined) {
-			return null;
-		} else {
-			return body.data.items[0].id.videoId;
+			isPlaying = true;
+			getID(args, function(id) {
+				queue.push('placeholder');
+				playMusic(id, message);
+				fetchVideoInfo(id, function(err, videoInfo) {
+					if (err) throw new Error(err);
+					let play_info = new Discord.RichEmbed()
+						.setAuthor(`Added To Queue`, message.author.avatarURL)
+						.setDescription(`**${videoInfo.title}**`)
+						.setColor("RANDOM")
+						.setFooter('بطلب من: ' + message.author.tag)
+						.setThumbnail(videoInfo.thumbnailUrl)
+					//.setDescription('?')
+					message.channel.sendEmbed(play_info);
+				});
+			});
 		}
 	}
-}
-
-function addToQueue(strID) {
-	if (strID.indexOf("youtube.com")) {
-		queue.push(getYTID(strID));
-	} else {
-		queue.push(strID);
-		songsQueue.push(strID);
+	else if (mess.startsWith(prefix + 'skip')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		message.reply(':gear: **تم التخطي**').then(() => {
+			skip_song(message);
+			var server = server = servers[message.guild.id];
+			if (message.guild.voiceConnection) message.guild.voiceConnection.end();
+		});
 	}
-}
-
-function skipSong(message) {
-	dispatcher.end();
-}
-/*------------------------------*/
-/* MUSIC CONTROL FUNCTIONS END */
-/*----------------------------*/
-
-/*----------------------------------*/
-/* YOUTUBE CONTROL FUNCTIONS START */
-/*--------------------------------*/
-async function searchYouTube(str) {
-	let search = await axios(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&q=${encodeURIComponent(str)}&key=${ytApiKey}`);
-	if (search.data.items[0] === undefined) {
-		return null;
-	} else {
-		return search.data.items;
+	else if (message.content.startsWith(prefix + 'volume')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		// console.log(args)
+		if (args > 100) return message.reply(':x: **100**');
+		if (args < 1) return message.reply(":x: **1**");
+		dispatcher.setVolume(1 * args / 50);
+		message.channel.sendMessage(`Volume Updated To: **${dispatcher.volume*50}**`);
 	}
-}
-
-async function getYouTubeResultsId(ytResult, numOfResults) {
-	let resultsID = [];
-	await youtube.searchVideos(ytResult, numOfResults)
-		.then(results => {
-			for (const resultId of results) {
-				resultsID.push(resultId.title);
-			}
-		})
-		.catch(err => console.log(err));
-	return resultsID;
-}
-/*--------------------------------*/
-/* YOUTUBE CONTROL FUNCTIONS END */
-/*------------------------------*/
-
-/*-----------------------*/
-/* MISC FUNCTIONS START */
-/*---------------------*/
-function shuffle(queue) {
-	for (let i = queue.length - 1; i > 0; i--) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[queue[i], queue[j]] = [queue[j], queue[i]];
+	else if (mess.startsWith(prefix + 'pause')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		message.reply(':gear: **تم الايقاف مؤقت**').then(() => {
+			dispatcher.pause();
+		});
 	}
-	return queue;
-}
+	else if (mess.startsWith(prefix + 'unpause')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		message.reply(':gear: **تم اعاده التشغيل**').then(() => {
+			dispatcher.resume();
+		});
+	}
+	else if (mess.startsWith(prefix + 'stop')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		message.reply(':name_badge: **تم الايقاف**');
+		var server = server = servers[message.guild.id];
+		if (message.guild.voiceConnection) message.guild.voiceConnection.disconnect();
+	}
+	else if (mess.startsWith(prefix + 'join')) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا ,انت غير موجود في روم صوتي**');
+		message.member.voiceChannel.join().then(message.react('✅'));
+	}
+	else if (mess.startsWith(prefix + 'play')) {
+		getID(args, function(id) {
+			add_to_queue(id);
+			fetchVideoInfo(id, function(err, videoInfo) {
+				if (err) throw new Error(err);
+				if (!message.member.voiceChannel) return message.reply('**عفوا, انت غير موجود في روم صوتي**');
+				if (isPlaying == false) return message.reply(':x:');
+				let playing_now_info = new Discord.RichEmbed()
+					.setAuthor(client.user.username, client.user.avatarURL)
+					.setDescription(`**${videoInfo.title}**`)
+					.setColor("RANDOM")
+					.setFooter('Requested By:' + message.author.tag)
+					.setImage(videoInfo.thumbnailUrl)
+				message.channel.sendEmbed(playing_now_info);
+				queueNames.push(videoInfo.title);
+				// let now_playing = videoInfo.title;
+				now_playing.push(videoInfo.title);
+
+			});
+
+		});
+	}
+
+	function skip_song(message) {
+		if (!message.member.voiceChannel) return message.reply('**عفوا, انت غير موجود في روم صوتي**');
+		dispatcher.end();
+	}
+
+	function playMusic(id, message) {
+		voiceChannel = message.member.voiceChannel;
+
+
+		voiceChannel.join().then(function(connectoin) {
+			let stream = ytdl('https://www.youtube.com/watch?v=' + id, {
+				filter: 'audioonly'
+			});
+			skipReq = 0;
+			skippers = [];
+
+			dispatcher = connectoin.playStream(stream);
+			dispatcher.on('end', function() {
+				skipReq = 0;
+				skippers = [];
+				queue.shift();
+				queueNames.shift();
+				if (queue.length === 0) {
+					queue = [];
+					queueNames = [];
+					isPlaying = false;
+				}
+				else {
+					setTimeout(function() {
+						playMusic(queue[0], message);
+					}, 500);
+				}
+			});
+		});
+	}
+
+	function getID(str, cb) {
+		if (isYoutube(str)) {
+			cb(getYoutubeID(str));
+		}
+		else {
+			search_video(str, function(id) {
+				cb(id);
+			});
+		}
+	}
+
+	function add_to_queue(strID) {
+		if (isYoutube(strID)) {
+			queue.push(getYoutubeID(strID));
+		}
+		else {
+			queue.push(strID);
+		}
+	}
+
+	function search_video(query, cb) {
+		request("https://www.googleapis.com/youtube/v3/search?part=id&type=video&q=" + encodeURIComponent(query) + "&key=" + yt_api_key, function(error, response, body) {
+			var json = JSON.parse(body);
+			cb(json.items[0].id.videoId);
+		});
+	}
+
+
+	function isYoutube(str) {
+		return str.toLowerCase().indexOf('youtube.com') > -1;
+	}
+});
 /*---------------------*/
 /* MISC FUNCTIONS END */
 /*-------------------*/
