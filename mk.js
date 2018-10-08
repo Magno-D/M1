@@ -234,23 +234,29 @@ client.on('message', function(message) {
 /*---------------------*/
 /* MISC FUNCTIONS END */
 /*-------------------*/
+client.on("ready", function() {
+	console.log("ready");
+	
+	client.user.setStatus("Online");
+	client.user.setGame("Kplay | KOD MRNM...");
+});
 const developers = ["399164491201249282","335442086645989376"]
 const adminprefix = "M";
-bot.on('message', message => {
+client.on('message', message => {
     var argresult = message.content.split(` `).slice(1).join(' ');
       if (!developers.includes(message.author.id)) return;
       
   if (message.content.startsWith(adminprefix + 'ply')) {
-    bot.user.setGame(argresult);
+    client.user.setGame(argresult);
       message.channel.send(`**✅   ${argresult}**`)
   } else 
   if (message.content.startsWith(adminprefix + 'setname')) {
-  bot.user.setUsername(argresult).then
+  client.user.setUsername(argresult).then
       message.channel.send(`Changing The Name To ..**${argresult}** `)
 } else
 if (message.content.startsWith(adminprefix + 'setavatar')) {
-  bot.user.setAvatar(argresult);
+  client.user.setAvatar(argresult);
     message.channel.send(`Changing The Avatar To :**${argresult}** `);
 }
 });
-bot.login(process.env.BOT_TOKEN);
+client.login(process.env.BOT_TOKEN);
